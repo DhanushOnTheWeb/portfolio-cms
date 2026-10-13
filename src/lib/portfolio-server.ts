@@ -42,23 +42,23 @@ export async function getPortfolioServerData(): Promise<PortfolioData> {
       supabase.from('projects').select('*').order('order_index', { ascending: true }),
     ]);
 
-    if (!profileRes.error) {
-      return {
-        profile: {
-          ...initialPortfolioData.profile,
-          ...(profileRes.data || {}),
-          social_links:
-            profileRes.data?.social_links && typeof profileRes.data.social_links === 'object'
-              ? profileRes.data.social_links
-              : initialPortfolioData.profile.social_links,
-        },
-        skills: !skillsRes.error && Array.isArray(skillsRes.data) ? skillsRes.data : [],
-        work_experience: !expRes.error && Array.isArray(expRes.data) ? expRes.data : [],
-        education: !eduRes.error && Array.isArray(eduRes.data) ? eduRes.data : [],
-        certificates_achievements: !certRes.error && Array.isArray(certRes.data) ? certRes.data : [],
-        projects: !projectsRes.error && Array.isArray(projectsRes.data) ? projectsRes.data : [],
-      };
-    }
+    const profileData = profileRes.data || initialPortfolioData.profile;
+
+    return {
+      profile: {
+        ...initialPortfolioData.profile,
+        ...profileData,
+        social_links:
+          profileData.social_links && typeof profileData.social_links === 'object'
+            ? profileData.social_links
+            : initialPortfolioData.profile.social_links,
+      },
+      skills: !skillsRes.error && Array.isArray(skillsRes.data) ? skillsRes.data : [],
+      work_experience: !expRes.error && Array.isArray(expRes.data) ? expRes.data : [],
+      education: !eduRes.error && Array.isArray(eduRes.data) ? eduRes.data : [],
+      certificates_achievements: !certRes.error && Array.isArray(certRes.data) ? certRes.data : [],
+      projects: !projectsRes.error && Array.isArray(projectsRes.data) ? projectsRes.data : [],
+    };
   } catch (err) {
     console.warn('Server Supabase fetch error, fallback to baseline data:', err);
   }

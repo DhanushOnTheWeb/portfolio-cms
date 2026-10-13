@@ -121,7 +121,8 @@ export async function uploadPortfolioMedia(
   });
 
   const supabase = createClient();
-  const uniqueKey = `${folder}/${Date.now()}-${Math.random().toString(36).substring(2, 8)}-${compressedName}`;
+  const sanitizedFileName = compressedName.replace(/[^a-zA-Z0-9._-]/g, '_');
+  const uniqueKey = `${folder}/${Date.now()}-${Math.random().toString(36).substring(2, 8)}-${sanitizedFileName}`;
 
   if (supabase) {
     try {
@@ -130,12 +131,15 @@ export async function uploadPortfolioMedia(
         .upload(uniqueKey, blob, {
           cacheControl: '3600',
           upsert: true,
-          contentType: blob.type || file.type,
+          contentType: blob.type || file.type || 'application/octet-stream',
         });
 
       if (error) {
-        console.warn('Supabase Storage upload error, falling back to data URL:', error);
-      } else {
+        console.error('Supabase Storage upload error:', error);
+        throw new Error(`Storage upload failed: ${error.message}`);
+      }
+
+      if (data) {
         const { data: publicUrlData } = supabase.storage
           .from('portfolio-media')
           .getPublicUrl(data.path);
@@ -152,8 +156,12 @@ export async function uploadPortfolioMedia(
           isFallback: false,
         };
       }
-    } catch (err) {
-      console.warn('Supabase storage exception, falling back to client URL:', err);
+    } catch (err: unknown) {
+      console.error('Supabase storage exception:', err);
+      if (err instanceof Error && err.message.startsWith('Storage upload failed:')) {
+        throw err;
+      }
+      throw new Error(err instanceof Error ? err.message : 'Storage upload failed. Please try again.');
     }
   }
 

@@ -12,6 +12,31 @@ import {
 
 const STORAGE_KEY = 'portfolio_cms_store_v1';
 
+/**
+ * Validates whether a string is a standard UUID v4/RFC4122 format.
+ * Postgres UUID column types reject non-UUID strings like 'skill_1728...'.
+ */
+export function isValidUUID(id?: string | null): boolean {
+  if (!id) return false;
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id);
+}
+
+/**
+ * Ensures an ID is a valid Postgres-compatible UUID.
+ * Replaces any temporary or legacy non-UUID ID with a cryptographically secure UUID.
+ */
+export function ensureUUID(id?: string | null): string {
+  if (id && isValidUUID(id)) return id;
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    const v = c === 'x' ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
+}
+
 // Helper to get client localStorage safely and merge with defaults
 function getLocalStore(): PortfolioData {
   if (typeof window === 'undefined') {
@@ -97,17 +122,26 @@ export async function fetchPortfolioData(): Promise<{
         supabase.from('projects').select('*').order('order_index', { ascending: true }),
       ]);
 
+      if (skillsRes.error) console.error('Supabase fetch skills warning:', skillsRes.error.message);
+      if (expRes.error) console.error('Supabase fetch experience warning:', expRes.error.message);
+      if (eduRes.error) console.error('Supabase fetch education warning:', eduRes.error.message);
+      if (certRes.error) console.error('Supabase fetch certs warning:', certRes.error.message);
+      if (projectsRes.error) console.error('Supabase fetch projects warning:', projectsRes.error.message);
+
       if (!profileRes.error) {
+        const liveData: PortfolioData = {
+          profile: profileRes.data || initialPortfolioData.profile,
+          skills: !skillsRes.error && Array.isArray(skillsRes.data) ? skillsRes.data : [],
+          work_experience: !expRes.error && Array.isArray(expRes.data) ? expRes.data : [],
+          education: !eduRes.error && Array.isArray(eduRes.data) ? eduRes.data : [],
+          certificates_achievements: !certRes.error && Array.isArray(certRes.data) ? certRes.data : [],
+          projects: !projectsRes.error && Array.isArray(projectsRes.data) ? projectsRes.data : [],
+        };
+        // Ensure local store stays synchronized with the database
+        saveLocalStore(liveData);
         return {
           isLiveSupabase: true,
-          data: {
-            profile: profileRes.data || initialPortfolioData.profile,
-            skills: skillsRes.data || [],
-            work_experience: expRes.data || [],
-            education: eduRes.data || [],
-            certificates_achievements: certRes.data || [],
-            projects: projectsRes.data || [],
-          },
+          data: liveData,
         };
       }
     } catch (err) {
@@ -125,30 +159,31 @@ export async function fetchPortfolioData(): Promise<{
 // ==================== PROFILE MUTATIONS ====================
 
 export async function saveProfileIntro(profile: ProfileIntro): Promise<ProfileIntro> {
+  const targetId = ensureUUID(profile.id || 'a0000000-0000-0000-0000-000000000001');
   const updatedProfile: ProfileIntro = {
     ...profile,
+    id: targetId,
     updated_at: new Date().toISOString(),
   };
 
   const supabase = createClient();
   if (supabase) {
-    try {
-      const { data, error } = await supabase
-        .from('profile_intro')
-        .upsert(updatedProfile)
-        .select()
-        .single();
-      if (!error && data) {
-        const store = getLocalStore();
-        store.profile = data;
-        saveLocalStore(store);
-        return data;
-      }
-      if (error) {
-        console.warn('Supabase profile update rejected (check RLS / Auth):', error.message);
-      }
-    } catch (e) {
-      console.warn('Supabase profile update fallback', e);
+    const { data, error } = await supabase
+      .from('profile_intro')
+      .upsert(updatedProfile)
+      .select()
+      .single();
+
+    if (error) {
+      console.error('Supabase profile update rejected:', error.message);
+      throw new Error(`Database error saving profile: ${error.message}`);
+    }
+
+    if (data) {
+      const store = getLocalStore();
+      store.profile = data;
+      saveLocalStore(store);
+      return data;
     }
   }
 
@@ -161,12 +196,11 @@ export async function saveProfileIntro(profile: ProfileIntro): Promise<ProfileIn
 // ==================== SKILLS MUTATIONS ====================
 
 export async function saveSkill(skill: Partial<Skill>): Promise<Skill> {
-  const isNew = !skill.id || skill.id.startsWith('s_temp_') || skill.id === 'new';
-  const targetId = isNew ? `skill_${Date.now()}` : skill.id!;
+  const targetId = ensureUUID(skill.id);
 
   const skillRecord: Skill = {
     id: targetId,
-    name: skill.name || 'New Skill',
+    name: (skill.name || 'New Skill').trim(),
     category: skill.category || 'language',
     icon_url: skill.icon_url || '',
     proficiency_level: Number(skill.proficiency_level) || 80,
@@ -177,25 +211,24 @@ export async function saveSkill(skill: Partial<Skill>): Promise<Skill> {
 
   const supabase = createClient();
   if (supabase) {
-    try {
-      const { data, error } = await supabase
-        .from('skills')
-        .upsert(skillRecord)
-        .select()
-        .single();
-      if (!error && data) {
-        const store = getLocalStore();
-        const index = store.skills.findIndex((s) => s.id === data.id);
-        if (index >= 0) store.skills[index] = data;
-        else store.skills.push(data);
-        saveLocalStore(store);
-        return data;
-      }
-      if (error) {
-        console.warn('Supabase skill update rejected (check RLS / Auth):', error.message);
-      }
-    } catch (e) {
-      console.warn('Supabase skill upsert fallback', e);
+    const { data, error } = await supabase
+      .from('skills')
+      .upsert(skillRecord)
+      .select()
+      .single();
+
+    if (error) {
+      console.error('Supabase skill update rejected:', error.message);
+      throw new Error(`Database error saving skill: ${error.message}`);
+    }
+
+    if (data) {
+      const store = getLocalStore();
+      const index = store.skills.findIndex((s) => s.id === data.id);
+      if (index >= 0) store.skills[index] = data;
+      else store.skills.push(data);
+      saveLocalStore(store);
+      return data;
     }
   }
 
@@ -212,11 +245,11 @@ export async function saveSkill(skill: Partial<Skill>): Promise<Skill> {
 
 export async function removeSkill(id: string): Promise<boolean> {
   const supabase = createClient();
-  if (supabase) {
-    try {
-      await supabase.from('skills').delete().eq('id', id);
-    } catch (e) {
-      console.warn('Supabase skill delete fallback', e);
+  if (supabase && isValidUUID(id)) {
+    const { error } = await supabase.from('skills').delete().eq('id', id);
+    if (error) {
+      console.error('Supabase skill delete failed:', error.message);
+      throw new Error(`Database error deleting skill: ${error.message}`);
     }
   }
 
@@ -229,16 +262,17 @@ export async function removeSkill(id: string): Promise<boolean> {
 export async function saveSkillOrders(skills: Skill[]): Promise<void> {
   const updated = skills.map((s, index) => ({
     ...s,
+    id: ensureUUID(s.id),
     order_index: index + 1,
     updated_at: new Date().toISOString(),
   }));
 
   const supabase = createClient();
   if (supabase) {
-    try {
-      await supabase.from('skills').upsert(updated);
-    } catch (e) {
-      console.warn('Supabase skill reorder fallback', e);
+    const { error } = await supabase.from('skills').upsert(updated);
+    if (error) {
+      console.error('Supabase skill reorder failed:', error.message);
+      throw new Error(`Database error reordering skills: ${error.message}`);
     }
   }
 
@@ -250,18 +284,17 @@ export async function saveSkillOrders(skills: Skill[]): Promise<void> {
 // ==================== PROJECTS MUTATIONS ====================
 
 export async function saveProject(project: Partial<Project>): Promise<Project> {
-  const isNew = !project.id || project.id.startsWith('p_temp_') || project.id === 'new';
-  const targetId = isNew ? `proj_${Date.now()}` : project.id!;
+  const targetId = ensureUUID(project.id);
 
   const record: Project = {
     id: targetId,
-    title: project.title || 'Untitled Project',
+    title: (project.title || 'Untitled Project').trim(),
     short_description: project.short_description || '',
     long_description: project.long_description || '',
     cover_image_url: project.cover_image_url || '',
     demo_link: project.demo_link || '',
     github_link: project.github_link || '',
-    tech_stack: project.tech_stack || [],
+    tech_stack: Array.isArray(project.tech_stack) ? project.tech_stack : [],
     featured: project.featured ?? false,
     order_index: Number(project.order_index) || 0,
     is_visible: project.is_visible ?? true,
@@ -270,25 +303,24 @@ export async function saveProject(project: Partial<Project>): Promise<Project> {
 
   const supabase = createClient();
   if (supabase) {
-    try {
-      const { data, error } = await supabase
-        .from('projects')
-        .upsert(record)
-        .select()
-        .single();
-      if (!error && data) {
-        const store = getLocalStore();
-        const index = store.projects.findIndex((p) => p.id === data.id);
-        if (index >= 0) store.projects[index] = data;
-        else store.projects.push(data);
-        saveLocalStore(store);
-        return data;
-      }
-      if (error) {
-        console.warn('Supabase project update rejected (check RLS / Auth):', error.message);
-      }
-    } catch (e) {
-      console.warn('Supabase project upsert fallback', e);
+    const { data, error } = await supabase
+      .from('projects')
+      .upsert(record)
+      .select()
+      .single();
+
+    if (error) {
+      console.error('Supabase project update rejected:', error.message);
+      throw new Error(`Database error saving project: ${error.message}`);
+    }
+
+    if (data) {
+      const store = getLocalStore();
+      const index = store.projects.findIndex((p) => p.id === data.id);
+      if (index >= 0) store.projects[index] = data;
+      else store.projects.push(data);
+      saveLocalStore(store);
+      return data;
     }
   }
 
@@ -305,11 +337,11 @@ export async function saveProject(project: Partial<Project>): Promise<Project> {
 
 export async function removeProject(id: string): Promise<boolean> {
   const supabase = createClient();
-  if (supabase) {
-    try {
-      await supabase.from('projects').delete().eq('id', id);
-    } catch (e) {
-      console.warn('Supabase project delete fallback', e);
+  if (supabase && isValidUUID(id)) {
+    const { error } = await supabase.from('projects').delete().eq('id', id);
+    if (error) {
+      console.error('Supabase project delete failed:', error.message);
+      throw new Error(`Database error deleting project: ${error.message}`);
     }
   }
 
@@ -322,16 +354,17 @@ export async function removeProject(id: string): Promise<boolean> {
 export async function saveProjectOrders(projects: Project[]): Promise<void> {
   const updated = projects.map((p, index) => ({
     ...p,
+    id: ensureUUID(p.id),
     order_index: index + 1,
     updated_at: new Date().toISOString(),
   }));
 
   const supabase = createClient();
   if (supabase) {
-    try {
-      await supabase.from('projects').upsert(updated);
-    } catch (e) {
-      console.warn('Supabase project reorder fallback', e);
+    const { error } = await supabase.from('projects').upsert(updated);
+    if (error) {
+      console.error('Supabase project reorder failed:', error.message);
+      throw new Error(`Database error reordering projects: ${error.message}`);
     }
   }
 
@@ -343,13 +376,12 @@ export async function saveProjectOrders(projects: Project[]): Promise<void> {
 // ==================== WORK EXPERIENCE MUTATIONS ====================
 
 export async function saveExperience(exp: Partial<WorkExperience>): Promise<WorkExperience> {
-  const isNew = !exp.id || exp.id.startsWith('w_temp_') || exp.id === 'new';
-  const targetId = isNew ? `exp_${Date.now()}` : exp.id!;
+  const targetId = ensureUUID(exp.id);
 
   const record: WorkExperience = {
     id: targetId,
-    role: exp.role || 'Software Engineer',
-    company: exp.company || 'Company Name',
+    role: (exp.role || 'Software Engineer').trim(),
+    company: (exp.company || 'Company Name').trim(),
     location: exp.location || 'Remote',
     start_date: exp.start_date || '2023',
     end_date: exp.end_date || 'Present',
@@ -363,25 +395,24 @@ export async function saveExperience(exp: Partial<WorkExperience>): Promise<Work
 
   const supabase = createClient();
   if (supabase) {
-    try {
-      const { data, error } = await supabase
-        .from('work_experience')
-        .upsert(record)
-        .select()
-        .single();
-      if (!error && data) {
-        const store = getLocalStore();
-        const index = store.work_experience.findIndex((w) => w.id === data.id);
-        if (index >= 0) store.work_experience[index] = data;
-        else store.work_experience.push(data);
-        saveLocalStore(store);
-        return data;
-      }
-      if (error) {
-        console.warn('Supabase experience update rejected (check RLS / Auth):', error.message);
-      }
-    } catch (e) {
-      console.warn('Supabase experience upsert fallback', e);
+    const { data, error } = await supabase
+      .from('work_experience')
+      .upsert(record)
+      .select()
+      .single();
+
+    if (error) {
+      console.error('Supabase experience update rejected:', error.message);
+      throw new Error(`Database error saving work experience: ${error.message}`);
+    }
+
+    if (data) {
+      const store = getLocalStore();
+      const index = store.work_experience.findIndex((w) => w.id === data.id);
+      if (index >= 0) store.work_experience[index] = data;
+      else store.work_experience.push(data);
+      saveLocalStore(store);
+      return data;
     }
   }
 
@@ -398,11 +429,11 @@ export async function saveExperience(exp: Partial<WorkExperience>): Promise<Work
 
 export async function removeExperience(id: string): Promise<boolean> {
   const supabase = createClient();
-  if (supabase) {
-    try {
-      await supabase.from('work_experience').delete().eq('id', id);
-    } catch (e) {
-      console.warn('Supabase experience delete fallback', e);
+  if (supabase && isValidUUID(id)) {
+    const { error } = await supabase.from('work_experience').delete().eq('id', id);
+    if (error) {
+      console.error('Supabase experience delete failed:', error.message);
+      throw new Error(`Database error deleting work experience: ${error.message}`);
     }
   }
 
@@ -415,16 +446,17 @@ export async function removeExperience(id: string): Promise<boolean> {
 export async function saveExperienceOrders(items: WorkExperience[]): Promise<void> {
   const updated = items.map((w, index) => ({
     ...w,
+    id: ensureUUID(w.id),
     order_index: index + 1,
     updated_at: new Date().toISOString(),
   }));
 
   const supabase = createClient();
   if (supabase) {
-    try {
-      await supabase.from('work_experience').upsert(updated);
-    } catch (e) {
-      console.warn('Supabase experience reorder fallback', e);
+    const { error } = await supabase.from('work_experience').upsert(updated);
+    if (error) {
+      console.error('Supabase experience reorder failed:', error.message);
+      throw new Error(`Database error reordering work experience: ${error.message}`);
     }
   }
 
@@ -436,13 +468,12 @@ export async function saveExperienceOrders(items: WorkExperience[]): Promise<voi
 // ==================== EDUCATION MUTATIONS ====================
 
 export async function saveEducation(edu: Partial<Education>): Promise<Education> {
-  const isNew = !edu.id || edu.id.startsWith('e_temp_') || edu.id === 'new';
-  const targetId = isNew ? `edu_${Date.now()}` : edu.id!;
+  const targetId = ensureUUID(edu.id);
 
   const record: Education = {
     id: targetId,
-    institution: edu.institution || 'University',
-    degree: edu.degree || 'Degree',
+    institution: (edu.institution || 'University').trim(),
+    degree: (edu.degree || 'Degree').trim(),
     score_or_cgpa: edu.score_or_cgpa || '',
     start_year: edu.start_year || '2020',
     end_year: edu.end_year || '2024',
@@ -454,25 +485,24 @@ export async function saveEducation(edu: Partial<Education>): Promise<Education>
 
   const supabase = createClient();
   if (supabase) {
-    try {
-      const { data, error } = await supabase
-        .from('education')
-        .upsert(record)
-        .select()
-        .single();
-      if (!error && data) {
-        const store = getLocalStore();
-        const index = store.education.findIndex((e) => e.id === data.id);
-        if (index >= 0) store.education[index] = data;
-        else store.education.push(data);
-        saveLocalStore(store);
-        return data;
-      }
-      if (error) {
-        console.warn('Supabase education update rejected (check RLS / Auth):', error.message);
-      }
-    } catch (e) {
-      console.warn('Supabase education upsert fallback', e);
+    const { data, error } = await supabase
+      .from('education')
+      .upsert(record)
+      .select()
+      .single();
+
+    if (error) {
+      console.error('Supabase education update rejected:', error.message);
+      throw new Error(`Database error saving education: ${error.message}`);
+    }
+
+    if (data) {
+      const store = getLocalStore();
+      const index = store.education.findIndex((e) => e.id === data.id);
+      if (index >= 0) store.education[index] = data;
+      else store.education.push(data);
+      saveLocalStore(store);
+      return data;
     }
   }
 
@@ -489,11 +519,11 @@ export async function saveEducation(edu: Partial<Education>): Promise<Education>
 
 export async function removeEducation(id: string): Promise<boolean> {
   const supabase = createClient();
-  if (supabase) {
-    try {
-      await supabase.from('education').delete().eq('id', id);
-    } catch (e) {
-      console.warn('Supabase education delete fallback', e);
+  if (supabase && isValidUUID(id)) {
+    const { error } = await supabase.from('education').delete().eq('id', id);
+    if (error) {
+      console.error('Supabase education delete failed:', error.message);
+      throw new Error(`Database error deleting education: ${error.message}`);
     }
   }
 
@@ -506,16 +536,17 @@ export async function removeEducation(id: string): Promise<boolean> {
 export async function saveEducationOrders(items: Education[]): Promise<void> {
   const updated = items.map((e, index) => ({
     ...e,
+    id: ensureUUID(e.id),
     order_index: index + 1,
     updated_at: new Date().toISOString(),
   }));
 
   const supabase = createClient();
   if (supabase) {
-    try {
-      await supabase.from('education').upsert(updated);
-    } catch (err) {
-      console.warn('Supabase education reorder fallback', err);
+    const { error } = await supabase.from('education').upsert(updated);
+    if (error) {
+      console.error('Supabase education reorder failed:', error.message);
+      throw new Error(`Database error reordering education: ${error.message}`);
     }
   }
 
@@ -527,17 +558,16 @@ export async function saveEducationOrders(items: Education[]): Promise<void> {
 // ==================== CERTIFICATES & AWARDS MUTATIONS ====================
 
 export async function saveCertificate(cert: Partial<CertificateAchievement>): Promise<CertificateAchievement> {
-  const isNew = !cert.id || cert.id.startsWith('c_temp_') || cert.id === 'new';
-  const targetId = isNew ? `cert_${Date.now()}` : cert.id!;
+  const targetId = ensureUUID(cert.id);
 
   const record: CertificateAchievement = {
     id: targetId,
-    title: cert.title || 'Certificate Title',
-    issuer: cert.issuer || 'Issuing Authority',
+    title: (cert.title || 'Certificate Title').trim(),
+    issuer: (cert.issuer || 'Issuing Authority').trim(),
     issue_date: cert.issue_date || '2024',
     credential_url: cert.credential_url || '',
     certificate_file_url: cert.certificate_file_url || '',
-    lor_loa_urls: cert.lor_loa_urls || [],
+    lor_loa_urls: Array.isArray(cert.lor_loa_urls) ? cert.lor_loa_urls : [],
     type: cert.type || 'certificate',
     order_index: Number(cert.order_index) || 0,
     is_visible: cert.is_visible ?? true,
@@ -546,25 +576,24 @@ export async function saveCertificate(cert: Partial<CertificateAchievement>): Pr
 
   const supabase = createClient();
   if (supabase) {
-    try {
-      const { data, error } = await supabase
-        .from('certificates_achievements')
-        .upsert(record)
-        .select()
-        .single();
-      if (!error && data) {
-        const store = getLocalStore();
-        const index = store.certificates_achievements.findIndex((c) => c.id === data.id);
-        if (index >= 0) store.certificates_achievements[index] = data;
-        else store.certificates_achievements.push(data);
-        saveLocalStore(store);
-        return data;
-      }
-      if (error) {
-        console.warn('Supabase certificate update rejected (check RLS / Auth):', error.message);
-      }
-    } catch (e) {
-      console.warn('Supabase cert upsert fallback', e);
+    const { data, error } = await supabase
+      .from('certificates_achievements')
+      .upsert(record)
+      .select()
+      .single();
+
+    if (error) {
+      console.error('Supabase certificate update rejected:', error.message);
+      throw new Error(`Database error saving certificate: ${error.message}`);
+    }
+
+    if (data) {
+      const store = getLocalStore();
+      const index = store.certificates_achievements.findIndex((c) => c.id === data.id);
+      if (index >= 0) store.certificates_achievements[index] = data;
+      else store.certificates_achievements.push(data);
+      saveLocalStore(store);
+      return data;
     }
   }
 
@@ -581,11 +610,11 @@ export async function saveCertificate(cert: Partial<CertificateAchievement>): Pr
 
 export async function removeCertificate(id: string): Promise<boolean> {
   const supabase = createClient();
-  if (supabase) {
-    try {
-      await supabase.from('certificates_achievements').delete().eq('id', id);
-    } catch (e) {
-      console.warn('Supabase cert delete fallback', e);
+  if (supabase && isValidUUID(id)) {
+    const { error } = await supabase.from('certificates_achievements').delete().eq('id', id);
+    if (error) {
+      console.error('Supabase certificate delete failed:', error.message);
+      throw new Error(`Database error deleting certificate: ${error.message}`);
     }
   }
 
@@ -598,16 +627,17 @@ export async function removeCertificate(id: string): Promise<boolean> {
 export async function saveCertificateOrders(items: CertificateAchievement[]): Promise<void> {
   const updated = items.map((c, index) => ({
     ...c,
+    id: ensureUUID(c.id),
     order_index: index + 1,
     updated_at: new Date().toISOString(),
   }));
 
   const supabase = createClient();
   if (supabase) {
-    try {
-      await supabase.from('certificates_achievements').upsert(updated);
-    } catch (err) {
-      console.warn('Supabase cert reorder fallback', err);
+    const { error } = await supabase.from('certificates_achievements').upsert(updated);
+    if (error) {
+      console.error('Supabase certificate reorder failed:', error.message);
+      throw new Error(`Database error reordering certificates: ${error.message}`);
     }
   }
 

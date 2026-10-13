@@ -96,8 +96,8 @@ export default function AdminCertificatesPage() {
       toast(editingCert.id ? 'Certificate updated!' : 'New credential added!', 'success');
       setModalOpen(false);
       loadData();
-    } catch {
-      toast('Failed to save certificate', 'error');
+    } catch (err: unknown) {
+      toast(err instanceof Error ? err.message : 'Failed to save certificate', 'error');
     } finally {
       setSaving(false);
     }
@@ -111,8 +111,8 @@ export default function AdminCertificatesPage() {
       toast('Certificate record deleted', 'info');
       setDeleteTargetId(null);
       loadData();
-    } catch {
-      toast('Failed to delete certificate', 'error');
+    } catch (err: unknown) {
+      toast(err instanceof Error ? err.message : 'Failed to delete certificate', 'error');
     }
   };
 

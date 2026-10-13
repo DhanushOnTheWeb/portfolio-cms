@@ -113,8 +113,8 @@ export default function AdminTimelinePage() {
       toast(editingExp.id ? 'Experience updated!' : 'New position added to timeline!', 'success');
       setExpModalOpen(false);
       loadData();
-    } catch {
-      toast('Failed to save experience', 'error');
+    } catch (err: unknown) {
+      toast(err instanceof Error ? err.message : 'Failed to save experience', 'error');
     } finally {
       setSaving(false);
     }
@@ -166,8 +166,8 @@ export default function AdminTimelinePage() {
       toast(editingEdu.id ? 'Education entry updated!' : 'New degree added to timeline!', 'success');
       setEduModalOpen(false);
       loadData();
-    } catch {
-      toast('Failed to save education', 'error');
+    } catch (err: unknown) {
+      toast(err instanceof Error ? err.message : 'Failed to save education', 'error');
     } finally {
       setSaving(false);
     }
@@ -206,8 +206,8 @@ export default function AdminTimelinePage() {
       await revalidatePortfolio('/admin/timeline');
       setDeleteTarget(null);
       loadData();
-    } catch {
-      toast('Failed to delete item', 'error');
+    } catch (err: unknown) {
+      toast(err instanceof Error ? err.message : 'Failed to delete item', 'error');
     }
   };
 

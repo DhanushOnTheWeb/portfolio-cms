@@ -50,8 +50,8 @@ export default function AdminProfilePage() {
       await saveProfileIntro(profile);
       await revalidatePortfolio('/admin/profile');
       toast('Hero profile details updated & revalidated!', 'success');
-    } catch {
-      toast('Failed to save profile changes.', 'error');
+    } catch (err: unknown) {
+      toast(err instanceof Error ? err.message : 'Failed to save profile changes.', 'error');
     } finally {
       setSaving(false);
     }

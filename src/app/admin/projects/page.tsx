@@ -98,8 +98,8 @@ export default function AdminProjectsPage() {
       );
       setModalOpen(false);
       loadData();
-    } catch {
-      toast('Failed to save project', 'error');
+    } catch (err: unknown) {
+      toast(err instanceof Error ? err.message : 'Failed to save project', 'error');
     } finally {
       setSaving(false);
     }
@@ -113,8 +113,8 @@ export default function AdminProjectsPage() {
       toast('Project removed', 'info');
       setDeleteTargetId(null);
       loadData();
-    } catch {
-      toast('Failed to delete project', 'error');
+    } catch (err: unknown) {
+      toast(err instanceof Error ? err.message : 'Failed to delete project', 'error');
     }
   };
 

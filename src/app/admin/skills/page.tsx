@@ -80,8 +80,8 @@ export default function AdminSkillsPage() {
       toast(editingSkill.id ? 'Skill updated!' : 'New skill added to orbit!', 'success');
       setModalOpen(false);
       loadData();
-    } catch {
-      toast('Failed to save skill', 'error');
+    } catch (err: unknown) {
+      toast(err instanceof Error ? err.message : 'Failed to save skill', 'error');
     } finally {
       setSaving(false);
     }
@@ -95,8 +95,8 @@ export default function AdminSkillsPage() {
       toast('Skill removed', 'info');
       setDeleteTargetId(null);
       loadData();
-    } catch {
-      toast('Failed to delete skill', 'error');
+    } catch (err: unknown) {
+      toast(err instanceof Error ? err.message : 'Failed to delete skill', 'error');
     }
   };
 
