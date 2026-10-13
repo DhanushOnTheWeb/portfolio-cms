@@ -19,21 +19,23 @@ import {
   Clock,
   Sparkles,
 } from 'lucide-react';
-import { fetchPortfolioData } from '@/lib/portfolio-service';
+import { fetchPortfolioData, getLocalStore } from '@/lib/portfolio-service';
 import { PortfolioData } from '@/lib/types';
 import { initialPortfolioData } from '@/lib/mock-data';
 import { revalidatePortfolio } from '@/app/actions';
 import { useToast } from '@/components/Toast';
 
 export default function AdminDashboardPage() {
-  const [data, setData] = useState<PortfolioData>(initialPortfolioData);
+  const [data, setData] = useState<PortfolioData>(() => {
+    if (typeof window === 'undefined') return initialPortfolioData;
+    return getLocalStore();
+  });
   const [isLiveSupabase, setIsLiveSupabase] = useState(false);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const { toast } = useToast();
 
-  const loadData = async () => {
-    setLoading(true);
-    const result = await fetchPortfolioData();
+  const loadData = async (force = false) => {
+    const result = await fetchPortfolioData({ force });
     setData(result.data);
     setIsLiveSupabase(result.isLiveSupabase);
     setLoading(false);
@@ -117,7 +119,7 @@ export default function AdminDashboardPage() {
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
           <button
             type="button"
-            onClick={loadData}
+            onClick={() => loadData(true)}
             style={{
               padding: '10px 16px',
               borderRadius: 'var(--radius-md)',

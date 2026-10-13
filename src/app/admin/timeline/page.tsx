@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import {
   fetchPortfolioData,
+  getLocalStore,
   saveExperience,
   removeExperience,
   saveExperienceOrders,
@@ -56,9 +57,17 @@ const EMPTY_EDU: Omit<Education, 'id'> = {
 
 export default function AdminTimelinePage() {
   const [tab, setTab] = useState<'experience' | 'education'>('experience');
-  const [experiences, setExperiences] = useState<WorkExperience[]>([]);
-  const [educations, setEducations] = useState<Education[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [experiences, setExperiences] = useState<WorkExperience[]>(() => {
+    if (typeof window === 'undefined') return [];
+    const local = getLocalStore();
+    return [...(local.work_experience || [])].sort((a, b) => a.order_index - b.order_index);
+  });
+  const [educations, setEducations] = useState<Education[]>(() => {
+    if (typeof window === 'undefined') return [];
+    const local = getLocalStore();
+    return [...(local.education || [])].sort((a, b) => a.order_index - b.order_index);
+  });
+  const [loading, setLoading] = useState(false);
 
   // Experience modal
   const [expModalOpen, setExpModalOpen] = useState(false);
@@ -74,9 +83,8 @@ export default function AdminTimelinePage() {
 
   const { toast } = useToast();
 
-  const loadData = async () => {
-    setLoading(true);
-    const res = await fetchPortfolioData();
+  const loadData = async (force = false) => {
+    const res = await fetchPortfolioData({ force });
     setExperiences([...(res.data.work_experience || [])].sort((a, b) => a.order_index - b.order_index));
     setEducations([...(res.data.education || [])].sort((a, b) => a.order_index - b.order_index));
     setLoading(false);
@@ -112,7 +120,7 @@ export default function AdminTimelinePage() {
       await revalidatePortfolio('/admin/timeline');
       toast(editingExp.id ? 'Experience updated!' : 'New position added to timeline!', 'success');
       setExpModalOpen(false);
-      loadData();
+      loadData(true);
     } catch (err: unknown) {
       toast(err instanceof Error ? err.message : 'Failed to save experience', 'error');
     } finally {
@@ -125,7 +133,7 @@ export default function AdminTimelinePage() {
     await saveExperience(updated);
     await revalidatePortfolio('/admin/timeline');
     toast(updated.is_visible ? `"${exp.role}" published` : `"${exp.role}" hidden`, 'info');
-    loadData();
+    loadData(true);
   };
 
   const handleMoveExp = async (index: number, direction: 'up' | 'down') => {
@@ -165,7 +173,7 @@ export default function AdminTimelinePage() {
       await revalidatePortfolio('/admin/timeline');
       toast(editingEdu.id ? 'Education entry updated!' : 'New degree added to timeline!', 'success');
       setEduModalOpen(false);
-      loadData();
+      loadData(true);
     } catch (err: unknown) {
       toast(err instanceof Error ? err.message : 'Failed to save education', 'error');
     } finally {
@@ -178,7 +186,7 @@ export default function AdminTimelinePage() {
     await saveEducation(updated);
     await revalidatePortfolio('/admin/timeline');
     toast(updated.is_visible ? `"${edu.degree}" published` : `"${edu.degree}" hidden`, 'info');
-    loadData();
+    loadData(true);
   };
 
   const handleMoveEdu = async (index: number, direction: 'up' | 'down') => {
@@ -205,7 +213,7 @@ export default function AdminTimelinePage() {
       }
       await revalidatePortfolio('/admin/timeline');
       setDeleteTarget(null);
-      loadData();
+      loadData(true);
     } catch (err: unknown) {
       toast(err instanceof Error ? err.message : 'Failed to delete item', 'error');
     }

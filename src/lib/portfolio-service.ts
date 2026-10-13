@@ -37,19 +37,32 @@ export function ensureUUID(id?: string | null): string {
   });
 }
 
+let memoryCache: PortfolioData | null = null;
+let lastFetchTimestamp = 0;
+const CACHE_TTL_MS = 60 * 1000; // 60 seconds
+
+export function invalidatePortfolioCache() {
+  lastFetchTimestamp = 0;
+  memoryCache = null;
+}
+
 // Helper to get client localStorage safely and merge with defaults
-function getLocalStore(): PortfolioData {
+export function getLocalStore(): PortfolioData {
   if (typeof window === 'undefined') {
-    return initialPortfolioData;
+    return memoryCache || initialPortfolioData;
+  }
+  if (memoryCache) {
+    return memoryCache;
   }
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(initialPortfolioData));
+      memoryCache = initialPortfolioData;
       return initialPortfolioData;
     }
     const parsed = JSON.parse(raw);
-    return {
+    const data: PortfolioData = {
       profile: parsed.profile
         ? {
             ...initialPortfolioData.profile,
@@ -72,13 +85,17 @@ function getLocalStore(): PortfolioData {
         : initialPortfolioData.certificates_achievements,
       projects: Array.isArray(parsed.projects) ? parsed.projects : initialPortfolioData.projects,
     };
+    memoryCache = data;
+    return data;
   } catch (e) {
     console.error('Failed reading localStorage, using initial mock data', e);
     return initialPortfolioData;
   }
 }
 
-function saveLocalStore(data: PortfolioData) {
+export function saveLocalStore(data: PortfolioData) {
+  memoryCache = data;
+  lastFetchTimestamp = Date.now();
   if (typeof window === 'undefined') return;
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
@@ -98,10 +115,19 @@ function saveLocalStore(data: PortfolioData) {
   }
 }
 
-export async function fetchPortfolioData(): Promise<{
+export async function fetchPortfolioData(options: { force?: boolean } = {}): Promise<{
   data: PortfolioData;
   isLiveSupabase: boolean;
 }> {
+  const now = Date.now();
+  // Return cached data immediately if within TTL and not forced
+  if (!options.force && memoryCache && now - lastFetchTimestamp < CACHE_TTL_MS) {
+    return {
+      data: memoryCache,
+      isLiveSupabase: true,
+    };
+  }
+
   const supabase = createClient();
 
   if (supabase) {
@@ -137,7 +163,9 @@ export async function fetchPortfolioData(): Promise<{
           certificates_achievements: !certRes.error && Array.isArray(certRes.data) ? certRes.data : [],
           projects: !projectsRes.error && Array.isArray(projectsRes.data) ? projectsRes.data : [],
         };
-        // Ensure local store stays synchronized with the database
+        // Update both in-memory cache and localStorage
+        memoryCache = liveData;
+        lastFetchTimestamp = Date.now();
         saveLocalStore(liveData);
         return {
           isLiveSupabase: true,
@@ -150,9 +178,10 @@ export async function fetchPortfolioData(): Promise<{
   }
 
   // Fallback local store
+  const fallback = getLocalStore();
   return {
     isLiveSupabase: false,
-    data: getLocalStore(),
+    data: fallback,
   };
 }
 

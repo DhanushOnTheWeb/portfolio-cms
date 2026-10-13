@@ -4,6 +4,7 @@ import React, { useEffect, useState } from 'react';
 import { Cpu, Plus, Edit2, Trash2, Sliders, X, Check, Eye, EyeOff, Layers, Sparkles } from 'lucide-react';
 import {
   fetchPortfolioData,
+  getLocalStore,
   saveSkill,
   removeSkill,
   saveSkillOrders,
@@ -25,9 +26,13 @@ const EMPTY_SKILL: Omit<Skill, 'id'> = {
 };
 
 export default function AdminSkillsPage() {
-  const [skills, setSkills] = useState<Skill[]>([]);
+  const [skills, setSkills] = useState<Skill[]>(() => {
+    if (typeof window === 'undefined') return [];
+    const local = getLocalStore();
+    return [...(local.skills || [])].sort((a, b) => a.order_index - b.order_index);
+  });
   const [activeCategory, setActiveCategory] = useState<string>('all');
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
   const [editingSkill, setEditingSkill] = useState<Partial<Skill>>(EMPTY_SKILL);
   const [saving, setSaving] = useState(false);
@@ -35,9 +40,8 @@ export default function AdminSkillsPage() {
 
   const { toast } = useToast();
 
-  const loadData = async () => {
-    setLoading(true);
-    const res = await fetchPortfolioData();
+  const loadData = async (force = false) => {
+    const res = await fetchPortfolioData({ force });
     const sorted = [...(res.data.skills || [])].sort((a, b) => a.order_index - b.order_index);
     setSkills(sorted);
     setLoading(false);
@@ -79,7 +83,7 @@ export default function AdminSkillsPage() {
       await revalidatePortfolio('/admin/skills');
       toast(editingSkill.id ? 'Skill updated!' : 'New skill added to orbit!', 'success');
       setModalOpen(false);
-      loadData();
+      loadData(true);
     } catch (err: unknown) {
       toast(err instanceof Error ? err.message : 'Failed to save skill', 'error');
     } finally {
@@ -94,7 +98,7 @@ export default function AdminSkillsPage() {
       await revalidatePortfolio('/admin/skills');
       toast('Skill removed', 'info');
       setDeleteTargetId(null);
-      loadData();
+      loadData(true);
     } catch (err: unknown) {
       toast(err instanceof Error ? err.message : 'Failed to delete skill', 'error');
     }
@@ -212,7 +216,7 @@ export default function AdminSkillsPage() {
       </div>
 
       {/* Skills Grid */}
-      {loading ? (
+      {loading && skills.length === 0 ? (
         <div style={{ padding: '40px', color: 'var(--text-secondary)' }}>Loading skills...</div>
       ) : filteredSkills.length === 0 ? (
         <div

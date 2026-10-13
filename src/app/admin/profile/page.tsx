@@ -3,7 +3,7 @@
 import React, { useEffect, useState } from 'react';
 import { Save, User, FileText, CheckCircle2, Globe, Sparkles } from 'lucide-react';
 import { GithubIcon, LinkedinIcon, TwitterIcon, InstagramIcon } from '@/components/SocialIcons';
-import { fetchPortfolioData, saveProfileIntro } from '@/lib/portfolio-service';
+import { fetchPortfolioData, getLocalStore, saveProfileIntro } from '@/lib/portfolio-service';
 import { ProfileIntro, SocialLinks } from '@/lib/types';
 import { initialPortfolioData } from '@/lib/mock-data';
 import { FileUploadZone } from '@/components/FileUploadZone';
@@ -12,8 +12,12 @@ import { useToast } from '@/components/Toast';
 import { revalidatePortfolio } from '@/app/actions';
 
 export default function AdminProfilePage() {
-  const [profile, setProfile] = useState<ProfileIntro>(initialPortfolioData.profile);
-  const [loading, setLoading] = useState(true);
+  const [profile, setProfile] = useState<ProfileIntro>(() => {
+    if (typeof window === 'undefined') return initialPortfolioData.profile;
+    const local = getLocalStore();
+    return local.profile || initialPortfolioData.profile;
+  });
+  const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const { toast } = useToast();
 
@@ -49,6 +53,7 @@ export default function AdminProfilePage() {
     try {
       await saveProfileIntro(profile);
       await revalidatePortfolio('/admin/profile');
+      fetchPortfolioData({ force: true });
       toast('Hero profile details updated & revalidated!', 'success');
     } catch (err: unknown) {
       toast(err instanceof Error ? err.message : 'Failed to save profile changes.', 'error');
@@ -57,7 +62,7 @@ export default function AdminProfilePage() {
     }
   };
 
-  if (loading) {
+  if (loading && !profile.full_name) {
     return <div style={{ padding: '40px', color: 'var(--text-secondary)' }}>Loading profile telemetry...</div>;
   }
 

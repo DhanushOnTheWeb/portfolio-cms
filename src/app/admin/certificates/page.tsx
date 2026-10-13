@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import {
   fetchPortfolioData,
+  getLocalStore,
   saveCertificate,
   removeCertificate,
   saveCertificateOrders,
@@ -41,9 +42,13 @@ const EMPTY_CERT: Omit<CertificateAchievement, 'id'> = {
 };
 
 export default function AdminCertificatesPage() {
-  const [certs, setCerts] = useState<CertificateAchievement[]>([]);
+  const [certs, setCerts] = useState<CertificateAchievement[]>(() => {
+    if (typeof window === 'undefined') return [];
+    const local = getLocalStore();
+    return [...(local.certificates_achievements || [])].sort((a, b) => a.order_index - b.order_index);
+  });
   const [activeType, setActiveType] = useState<string>('all');
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
   const [editingCert, setEditingCert] = useState<Partial<CertificateAchievement>>(EMPTY_CERT);
   const [saving, setSaving] = useState(false);
@@ -51,9 +56,8 @@ export default function AdminCertificatesPage() {
 
   const { toast } = useToast();
 
-  const loadData = async () => {
-    setLoading(true);
-    const res = await fetchPortfolioData();
+  const loadData = async (force = false) => {
+    const res = await fetchPortfolioData({ force });
     const sorted = [...(res.data.certificates_achievements || [])].sort((a, b) => a.order_index - b.order_index);
     setCerts(sorted);
     setLoading(false);
@@ -95,7 +99,7 @@ export default function AdminCertificatesPage() {
       await revalidatePortfolio('/admin/certificates');
       toast(editingCert.id ? 'Certificate updated!' : 'New credential added!', 'success');
       setModalOpen(false);
-      loadData();
+      loadData(true);
     } catch (err: unknown) {
       toast(err instanceof Error ? err.message : 'Failed to save certificate', 'error');
     } finally {
@@ -110,7 +114,7 @@ export default function AdminCertificatesPage() {
       await revalidatePortfolio('/admin/certificates');
       toast('Certificate record deleted', 'info');
       setDeleteTargetId(null);
-      loadData();
+      loadData(true);
     } catch (err: unknown) {
       toast(err instanceof Error ? err.message : 'Failed to delete certificate', 'error');
     }
@@ -234,7 +238,7 @@ export default function AdminCertificatesPage() {
       </div>
 
       {/* Grid */}
-      {loading ? (
+      {loading && certs.length === 0 ? (
         <div style={{ padding: '40px', color: 'var(--text-secondary)' }}>Loading credentials...</div>
       ) : filteredCerts.length === 0 ? (
         <div className="glass-panel" style={{ padding: '40px 24px', textAlign: 'center', color: 'var(--text-muted)' }}>

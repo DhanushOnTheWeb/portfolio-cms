@@ -18,6 +18,7 @@ import {
 import { GithubIcon } from '@/components/SocialIcons';
 import {
   fetchPortfolioData,
+  getLocalStore,
   saveProject,
   removeProject,
   saveProjectOrders,
@@ -43,8 +44,12 @@ const EMPTY_PROJECT: Omit<Project, 'id'> = {
 };
 
 export default function AdminProjectsPage() {
-  const [projects, setProjects] = useState<Project[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [projects, setProjects] = useState<Project[]>(() => {
+    if (typeof window === 'undefined') return [];
+    const local = getLocalStore();
+    return [...(local.projects || [])].sort((a, b) => a.order_index - b.order_index);
+  });
+  const [loading, setLoading] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
   const [editingProject, setEditingProject] = useState<Partial<Project>>(EMPTY_PROJECT);
   const [tagInput, setTagInput] = useState('');
@@ -55,9 +60,8 @@ export default function AdminProjectsPage() {
 
   const { toast } = useToast();
 
-  const loadData = async () => {
-    setLoading(true);
-    const res = await fetchPortfolioData();
+  const loadData = async (force = false) => {
+    const res = await fetchPortfolioData({ force });
     const sorted = [...(res.data.projects || [])].sort((a, b) => a.order_index - b.order_index);
     setProjects(sorted);
     setLoading(false);
@@ -97,7 +101,7 @@ export default function AdminProjectsPage() {
         'success'
       );
       setModalOpen(false);
-      loadData();
+      loadData(true);
     } catch (err: unknown) {
       toast(err instanceof Error ? err.message : 'Failed to save project', 'error');
     } finally {
@@ -112,7 +116,7 @@ export default function AdminProjectsPage() {
       await revalidatePortfolio('/admin/projects');
       toast('Project removed', 'info');
       setDeleteTargetId(null);
-      loadData();
+      loadData(true);
     } catch (err: unknown) {
       toast(err instanceof Error ? err.message : 'Failed to delete project', 'error');
     }
@@ -206,7 +210,7 @@ export default function AdminProjectsPage() {
       </div>
 
       {/* Projects Grid / List */}
-      {loading ? (
+      {loading && projects.length === 0 ? (
         <div style={{ padding: '40px', color: 'var(--text-secondary)' }}>Loading projects database...</div>
       ) : projects.length === 0 ? (
         <div
